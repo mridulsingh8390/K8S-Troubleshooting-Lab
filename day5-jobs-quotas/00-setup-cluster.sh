@@ -91,4 +91,4 @@ kubectl version
 
 echo ""
 echo "==> Done. Cluster context: kind-${CLUSTER_NAME}"
-echo "==> Next: run ./02-create-issues-round1.sh to seed dev/test namespaces with broken workloads."
+echo "==> Next: run ./01-create-issues.sh to seed namespace day5 with broken workloads."

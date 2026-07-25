@@ -27,7 +27,9 @@ K8S-Troubleshooting-Lab/
 ├── day2-storage/          (same 4 scripts, namespace 'day2')
 ├── day3-networking/       (same 4 scripts, namespace 'day3')
 ├── day4-security-rbac/    (same 4 scripts, namespace 'day4')
-└── day5-jobs-quotas/      (same 4 scripts, namespace 'day5')
+├── day5-jobs-quotas/      (same 4 scripts, namespace 'day5')
+├── day6-control-plane/    (namespace 'day6' — ADVANCED, see warning below)
+└── day7-ingress-tls/      (namespace 'day7' — setup also installs ingress-nginx)
 ```
 
 ## How to use any single day folder
@@ -64,7 +66,26 @@ that every day's namespaces live in side by side.
 | `*-create-issues*.sh` | That day's namespace(s) | Seeds broken resources named `app-N`. Answer key is in each script's comments only. |
 | `*-cleanup*.sh` | That day's namespace(s) | Deletes only that day's (or that round's) resources, leaving the cluster and other days intact. Use to retry from scratch. |
 | `03-delete-cluster.sh` (day1..day5 only) | Cluster-wide | Deletes the entire kind cluster (every day, every namespace). Use only when fully done, or to force a clean rebuild. |
-| `00-reset-all-days.sh` (repo root) | Every namespace, cluster-wide scope | Wipes `dev`, `test` (Day-0), and `day1`..`day5` namespaces, plus the day4 ClusterRoleBinding, in one shot — without touching the cluster itself. Equivalent to running every day's own cleanup script back to back. |
+| `00-reset-all-days.sh` (repo root) | Every namespace, cluster-wide scope | Wipes `dev`, `test` (Day-0), and `day1`..`day7` namespaces, plus the day4 ClusterRoleBinding, in one shot — without touching the cluster itself. Delegates to day6's own cleanup script to also revert its node/static-pod changes. Equivalent to running every day's own cleanup script back to back. |
+
+**Day 6 is different from the others**: its `01-create-issues.sh` reaches
+into the kind node containers directly via `docker exec` (editing static
+pod manifests, stopping kubelet, filling disk) rather than only using
+`kubectl`. Two of its five issues (`app-1`, `app-2`) temporarily affect
+**the whole cluster's** scheduling/reconciliation, not just namespace
+`day6`, until fixed. Its own `02-cleanup-namespace.sh` reverts node-level
+state as well as deleting the namespace — always use that script (or the
+root `00-reset-all-days.sh`) rather than a plain `kubectl delete namespace
+day6` when you're done. If you ever get it into a confusing state,
+`03-delete-cluster.sh` + a fresh `00-setup-cluster.sh` is a safe full
+rebuild.
+
+**Day 7 requires `ingress-nginx`**, which its `00-setup-cluster.sh`
+installs automatically (the other days' setup scripts don't). This kind
+cluster has no host port-mapping for 80/443, so Ingress testing happens
+from inside the cluster via the `curl-debug` pod and a `Host` header —
+see the comments at the top of `day7-ingress-tls/01-create-issues.sh` for
+the exact command.
 
 ## Day-by-day themes
 
@@ -112,11 +133,35 @@ schedule string, a `ResourceQuota` blocking new pod creation, a
 `LimitRange` default memory limit causing an unexpected OOMKilled, and an
 HPA pointing at a Deployment name that doesn't exist.
 
+**Day 6 — Node & Control Plane** (`day6`, CKA disaster-recovery flavored — ADVANCED)
+A broken kube-scheduler static pod manifest (cluster-wide: new pods stop
+getting scheduled anywhere), a broken kube-controller-manager static pod
+manifest (cluster-wide: Deployments stop reconciling into pods), a
+stopped kubelet on a worker node (NotReady), a "noisy neighbor" pod
+without resource/volume limits filling real node disk and risking
+DiskPressure for its neighbors, and a full etcd backup/restore exercise —
+a critical ConfigMap is snapshotted then "accidentally" deleted, and your
+job is to restore it from the etcd snapshot using the standard CKA
+procedure.
+
+**Day 7 — Ingress & TLS** (`day7`, requires `ingress-nginx`)
+An Ingress backend pointing at a Service port that doesn't exist (503), a
+missing `ingressClassName` so the Ingress is silently never adopted by
+the controller, `pathType: Exact` where `Prefix` was needed (404 on
+sub-paths), a TLS `secretName` that references a Secret which was never
+created, and two Ingress objects claiming the identical host+path with
+different backends — an unpredictable-routing conflict you have to spot
+and resolve.
+
 ## Suggested pace
 
 Work through `Day-0` first (both rounds) to build the core diagnostic
 habits — `describe`/`logs`/`events` before anything else — then move
-through `day1`..`day5` in order, one namespace at a time. Each day/round
+through `day1`..`day5` in order, one namespace at a time. Save `day6`
+for last: it's the most advanced (node/control-plane/etcd level, not just
+`kubectl`) and builds directly on everything practiced in the earlier
+days. `day7` can slot in anywhere after `day3` (networking fundamentals)
+since Ingress is really an extension of Service routing. Each day/round
 is independent, so you can also jump around or redo any of them from
 scratch using that folder's own cleanup script plus its create-issues
 script, all without leaving that folder. Use the repo-root
