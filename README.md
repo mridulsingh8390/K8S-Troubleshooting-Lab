@@ -32,7 +32,18 @@ K8S-Troubleshooting-Lab/
 ├── day7-ingress-tls/      (namespace 'day7' — setup also installs ingress-nginx)
 ├── day8-pv-statefulset/   (namespace 'day8' — also creates 3 cluster-scoped PVs)
 ├── day9-daemonset-lifecycle/  (namespace 'day9')
-└── day10-helm-webhooks/   (namespace 'day10' + 'day10-stuck' — setup also installs Helm)
+├── day10-helm-webhooks/   (namespace 'day10' + 'day10-stuck' — setup also installs Helm)
+│
+│   Everything above runs on the shared LOCAL kind cluster. Everything
+│   below runs on a REAL AKS cluster in Azure — separate infrastructure,
+│   separate cost, separate kubectl context. See the "Day 11-15" section
+│   below before running any of these.
+│
+├── day11-aks-acr-identity/         (namespace 'aks-day11')
+├── day12-aks-storage-csi/          (namespace 'aks-day12')
+├── day13-aks-networking-agic/      (namespace 'aks-day13')
+├── day14-aks-rbac-aad/             (namespace 'aks-day14')
+└── day15-aks-autoscaler-nodepools/ (namespace 'aks-day15')
 ```
 
 ## How to use any single day folder
@@ -105,6 +116,60 @@ a **second namespace** (`day10-stuck`) that's deliberately left in
 `02-cleanup-namespace.sh` — it handles all of that in the right order
 (clearing finalizers before deleting the CRD, uninstalling Helm releases,
 etc.) so nothing gets left behind or hangs.
+
+## Day 11-15 — AKS (real Azure, not kind)
+
+Everything from `Day-0` through `day10` runs on one local, free, kind
+cluster. **`day11` through `day15` are fundamentally different**: they
+require a real Azure subscription and create a real, billable AKS
+cluster, because things like ACR authentication, Azure Disk/File CSI
+zone behavior, Azure CNI IP exhaustion, AGIC, Azure AD RBAC integration,
+and the cluster autoscaler's interaction with node pools cannot be
+faithfully reproduced on kind at all — they depend on the real Azure
+control plane.
+
+**Before running any `day1N` folder:**
+```bash
+az login
+az account set --subscription "<your-subscription-id-or-name>"
+```
+Each `dayN-aks-*/00-setup-cluster.sh` installs the Azure CLI if missing,
+checks you're logged in (exits with instructions if not — it will never
+run `az login` for you), and creates one shared AKS cluster
+(`aks-practice` in resource group `aks-practice-rg`) that all 5 AKS
+folders use, mirroring how `day1`-`day10` share one kind cluster.
+
+**Cost and safety — read this before starting:**
+- An AKS cluster is real, billable infrastructure (VMs, disks, and
+  whatever else each day adds — an ACR in `day11`, extra node pools in
+  `day15`, etc.). It is not free and not instant to provision
+  (~5-15 minutes for cluster creation).
+- **`00-reset-all-days.sh` at the repo root does NOT touch anything in
+  day11-day15, on purpose.** Once you run `az aks get-credentials`, your
+  `kubectl` context points at the real AKS cluster instead of kind — a
+  script written assuming the local kind cluster could otherwise run
+  destructive commands against real Azure resources if invoked while
+  pointed at AKS. Clean up AKS-day resources only via each folder's own
+  `02-cleanup-namespace.sh`, or fastest of all, delete the whole resource
+  group when you're completely done:
+  ```bash
+  az group delete --name aks-practice-rg --yes --no-wait
+  ```
+- Check your current context before running ANY cleanup or reset script:
+  `kubectl config current-context`. If it says something with `aks` in
+  it, you're pointed at Azure, not kind.
+- I have not been able to test any of the day11-15 scripts against a
+  live Azure subscription (no Azure access in my environment). Syntax is
+  checked and the concepts are accurate to how AKS actually behaves, but
+  exact CLI flags/output text can drift across `az` CLI versions and
+  Azure regions — treat these as a strong starting point to debug and
+  adapt, not guaranteed-to-run-unmodified scripts. Some issues
+  (`day13`'s AGIC scenario, `day14`'s Azure-RBAC-mode scenario) are
+  intentionally left as **guided manual exercises** rather than fully
+  scripted, because fully automating them would require provisioning
+  significant extra Azure infrastructure (an Application Gateway, a
+  second cluster in Azure RBAC mode) that isn't practical to spin up
+  unconditionally in a shared setup script.
 
 ## Day-by-day themes
 
@@ -207,6 +272,51 @@ forever because a custom resource inside it carries a finalizer nothing
 will ever remove — the last-resort manual-finalizer-removal fix, done
 carefully.
 
+**Day 11 — AKS: ACR & Workload Identity** (`aks-day11`, real Azure)
+An ACR never attached to the cluster's managed identity (`ImagePullBackOff`
+despite a correct image reference), a Workload Identity setup missing the
+one pod-level label (`azure.workload.identity/use: "true"`) that actually
+activates the token-injection webhook — everything else can look
+perfectly configured and it still won't work — and an ACR pull secret
+holding an expired/invalid credential despite being correctly wired up.
+
+**Day 12 — AKS: Azure Disk/File CSI Storage** (`aks-day12`, real Azure)
+A Premium disk StorageClass paired with a VM size that doesn't support
+Premium attachment, an Azure Disk's zone-bound nature causing a "volume
+node affinity conflict" when a rescheduled pod lands in a different
+availability zone than its disk, and an Azure Files mount failing at the
+data-plane level because the storage account's network rules block the
+AKS subnet — while the PVC itself binds just fine.
+
+**Day 13 — AKS: Azure CNI Networking & AGIC** (`aks-day13`, real Azure)
+Azure CNI's per-node IP reservation (based on `--max-pods`, not actual
+pod count) exhausting a small subnet's address space, an AGIC
+Application Gateway backend reporting Unhealthy because its dedicated
+subnet blocks AGIC's own required health-probe ports (guided manual
+exercise — needs the AGIC add-on), and a NetworkPolicy that's silently
+never enforced at all because the cluster has no network policy engine
+enabled — the most dangerous kind of failure, since it looks like a
+working control that simply never fires.
+
+**Day 14 — AKS: Azure AD/Entra RBAC Integration** (`aks-day14`, real Azure)
+A RoleBinding referencing a stale Azure AD group Object ID (group
+recreated with the same name generates a brand-new ID), a cluster in
+Azure RBAC mode where Kubernetes-native Role/RoleBinding objects are
+silently ignored entirely in favor of Azure-side role assignments
+(guided manual exercise), and a fully-reproducible local gotcha: using
+`az aks get-credentials --admin` merges in a cert-based context that
+bypasses Azure AD auth entirely, masking real RBAC problems behind
+cluster-admin access without anyone noticing which context is active.
+
+**Day 15 — AKS: Cluster Autoscaler & Node Pools** (`aks-day15`, real Azure)
+Pods stuck Pending because the autoscaler is already at its configured
+`max-count` ceiling (looks identical to autoscaler being disabled), a
+tainted dedicated node pool that the autoscaler won't scale up because
+the workload was never tolerating it in the first place, and a pod
+annotated `cluster-autoscaler.kubernetes.io/safe-to-evict: "false"` that
+permanently blocks scale-down consolidation on its node — invisible in
+`kubectl get pods`, only visible via `describe` or `-o yaml`.
+
 ## Suggested pace
 
 Work through `Day-0` first (both rounds) to build the core diagnostic
@@ -226,4 +336,12 @@ Service routing. Each day/round is independent, so you can also jump
 around or redo any of them from scratch using that folder's own cleanup
 script plus its create-issues script, all without leaving that folder.
 Use the repo-root `00-reset-all-days.sh` whenever you want a full clean
-slate across everything at once.
+slate across `Day-0`..`day10` at once.
+
+Treat `day11`..`day15` as a separate track entirely, done once you're
+comfortable with the fundamentals above — they assume the same
+diagnostic instincts, applied to Azure-specific failure surfaces. Since
+they share one real AKS cluster and cost money while it exists, it's
+worth working through all 5 in one focused session rather than leaving
+the cluster running between visits, and deleting the `aks-practice-rg`
+resource group the moment you're done.
