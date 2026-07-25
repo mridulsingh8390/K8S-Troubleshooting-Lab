@@ -29,7 +29,10 @@ K8S-Troubleshooting-Lab/
 ├── day4-security-rbac/    (same 4 scripts, namespace 'day4')
 ├── day5-jobs-quotas/      (same 4 scripts, namespace 'day5')
 ├── day6-control-plane/    (namespace 'day6' — ADVANCED, see warning below)
-└── day7-ingress-tls/      (namespace 'day7' — setup also installs ingress-nginx)
+├── day7-ingress-tls/      (namespace 'day7' — setup also installs ingress-nginx)
+├── day8-pv-statefulset/   (namespace 'day8' — also creates 3 cluster-scoped PVs)
+├── day9-daemonset-lifecycle/  (namespace 'day9')
+└── day10-helm-webhooks/   (namespace 'day10' + 'day10-stuck' — setup also installs Helm)
 ```
 
 ## How to use any single day folder
@@ -66,7 +69,7 @@ that every day's namespaces live in side by side.
 | `*-create-issues*.sh` | That day's namespace(s) | Seeds broken resources named `app-N`. Answer key is in each script's comments only. |
 | `*-cleanup*.sh` | That day's namespace(s) | Deletes only that day's (or that round's) resources, leaving the cluster and other days intact. Use to retry from scratch. |
 | `03-delete-cluster.sh` (day1..day5 only) | Cluster-wide | Deletes the entire kind cluster (every day, every namespace). Use only when fully done, or to force a clean rebuild. |
-| `00-reset-all-days.sh` (repo root) | Every namespace, cluster-wide scope | Wipes `dev`, `test` (Day-0), and `day1`..`day7` namespaces, plus the day4 ClusterRoleBinding, in one shot — without touching the cluster itself. Delegates to day6's own cleanup script to also revert its node/static-pod changes. Equivalent to running every day's own cleanup script back to back. |
+| `00-reset-all-days.sh` (repo root) | Every namespace, cluster-wide scope | Wipes `dev`, `test` (Day-0), and `day1`..`day10` namespaces, plus the day4 ClusterRoleBinding, day8's 3 cluster-scoped PersistentVolumes, and day10's Helm releases/webhook/CRD/stuck namespace, in one shot — without touching the cluster itself. Delegates to day6's and day10's own cleanup scripts for the parts a plain namespace delete can't handle. Equivalent to running every day's own cleanup script back to back. |
 
 **Day 6 is different from the others**: its `01-create-issues.sh` reaches
 into the kind node containers directly via `docker exec` (editing static
@@ -86,6 +89,22 @@ cluster has no host port-mapping for 80/443, so Ingress testing happens
 from inside the cluster via the `curl-debug` pod and a `Host` header —
 see the comments at the top of `day7-ingress-tls/01-create-issues.sh` for
 the exact command.
+
+**Day 8 creates 3 cluster-scoped PersistentVolumes** (`pv-1`, `pv-2`,
+`pv-3`) alongside the `day8` namespace. PVs aren't namespaced, so a plain
+`kubectl delete namespace day8` won't remove them — always use this
+folder's own `02-cleanup-namespace.sh` (or the root
+`00-reset-all-days.sh`), both of which delete the PVs explicitly.
+
+**Day 10 requires `helm`**, which its `00-setup-cluster.sh` installs
+automatically, and it's the most involved cleanup of any day: it tracks
+Helm releases (which `kubectl delete namespace` doesn't know about), a
+cluster-scoped `ValidatingWebhookConfiguration`, a cluster-scoped CRD, and
+a **second namespace** (`day10-stuck`) that's deliberately left in
+`Terminating` state as part of the exercise. Always use this folder's own
+`02-cleanup-namespace.sh` — it handles all of that in the right order
+(clearing finalizers before deleting the CRD, uninstalling Helm releases,
+etc.) so nothing gets left behind or hangs.
 
 ## Day-by-day themes
 
@@ -153,17 +172,58 @@ created, and two Ingress objects claiming the identical host+path with
 different backends — an unpredictable-routing conflict you have to spot
 and resolve.
 
+**Day 8 — PV/PVC & StatefulSet Lifecycle** (`day8`)
+Deeper storage/StatefulSet scenarios than Day 2: a statically-provisioned
+PV/PVC pair that never binds because of a label-selector mismatch, a PV
+stuck in `Released` after its original PVC was deleted (with
+`Retain` policy) blocking a brand-new PVC from reusing it, a PVC
+requesting more capacity than the only matching PV offers, a StatefulSet
+rolling update that appears "stuck" because a leftover
+`updateStrategy.rollingUpdate.partition` value only updates the highest
+ordinals, and a StatefulSet with default `OrderedReady` pod management
+where pod-0 never becomes Ready — so pod-1 and pod-2 are never even
+created.
+
+**Day 9 — DaemonSets & Pod Lifecycle Timing** (`day9`)
+A DaemonSet with a `nodeSelector` that quietly narrows it to fewer nodes
+than expected ("DaemonSets run everywhere" isn't actually guaranteed), a
+`hostPort` collision that blocks a DaemonSet pod on exactly one node, a
+`PodDisruptionBudget` with `minAvailable` set so high it blocks node
+drain entirely, a `preStop` hook that gets cut off by SIGKILL because
+`terminationGracePeriodSeconds` is shorter than the hook itself takes,
+and a `startupProbe` budget too small for the app's real startup time —
+which looks identical to a crashing app but isn't one.
+
+**Day 10 — Helm, Admission Webhooks & CRD/Namespace Lifecycle** (`day10`, requires `helm`)
+A Helm chart's `required` guard catching a bad values override before
+anything gets created, a `helm upgrade --atomic` that silently
+auto-rolls-back after a bad image tag (nothing looks "currently broken",
+which is the trap), a `ValidatingWebhookConfiguration` pointing at a
+Service that doesn't exist — blocking all new pod creation in just this
+namespace until fixed — a CRD installed with no controller behind it (a
+custom resource that just sits there, reconciling nothing, with no
+visible error), and a namespace deliberately stuck in `Terminating`
+forever because a custom resource inside it carries a finalizer nothing
+will ever remove — the last-resort manual-finalizer-removal fix, done
+carefully.
+
 ## Suggested pace
 
 Work through `Day-0` first (both rounds) to build the core diagnostic
 habits — `describe`/`logs`/`events` before anything else — then move
-through `day1`..`day5` in order, one namespace at a time. Save `day6`
-for last: it's the most advanced (node/control-plane/etcd level, not just
-`kubectl`) and builds directly on everything practiced in the earlier
-days. `day7` can slot in anywhere after `day3` (networking fundamentals)
-since Ingress is really an extension of Service routing. Each day/round
-is independent, so you can also jump around or redo any of them from
-scratch using that folder's own cleanup script plus its create-issues
-script, all without leaving that folder. Use the repo-root
-`00-reset-all-days.sh` whenever you want a full clean slate across
-everything at once.
+through `day1`..`day5` in order, one namespace at a time. `day8` pairs
+well right after `day2` since both are storage-themed (`day8` is the
+deeper, static-provisioning/StatefulSet-lifecycle follow-up to `day2`'s
+dynamic-provisioning basics). `day9` fits naturally after `day8` since
+both are workload-lifecycle-focused. Save `day6` and `day10` for last:
+`day6` is the most advanced in terms of blast radius (node/control-plane/
+etcd level, not just `kubectl`), and `day10` assumes comfort with
+everything else since a broken webhook or stuck namespace is exactly the
+kind of "everything else looks fine" incident that's hardest to diagnose
+without the earlier days' habits. `day7` can slot in anywhere after
+`day3` (networking fundamentals) since Ingress is really an extension of
+Service routing. Each day/round is independent, so you can also jump
+around or redo any of them from scratch using that folder's own cleanup
+script plus its create-issues script, all without leaving that folder.
+Use the repo-root `00-reset-all-days.sh` whenever you want a full clean
+slate across everything at once.
