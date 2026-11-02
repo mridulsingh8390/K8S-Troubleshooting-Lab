@@ -1,33 +1,31 @@
 #!/usr/bin/env bash
-# 10-create-all-issues.sh
-# Complete troubleshooting lab: Creates all 20 broken scenarios
-# qa namespace:        app-1 to app-10  (Basic issues)
-# advanced namespace:  app-11 to app-20 (Advanced issues)
+# 10-create-all-issues-qa-only.sh
+# Complete troubleshooting lab: All 20 broken scenarios in QA namespace only
+# qa namespace: app-1 to app-20 (Basic + Advanced issues)
 # WARNING: Intentionally broken for practice. Use only in disposable Kind cluster.
-# Usage: chmod +x 10-create-all-issues.sh && ./10-create-all-issues.sh
+# Usage: chmod +x 10-create-all-issues-qa-only.sh && ./10-create-all-issues-qa-only.sh
 
 set -euo pipefail
 
 # Colors for output
-RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}  Kubernetes Troubleshooting Lab Setup${NC}"
-echo -e "${GREEN}  Creating 20 broken scenarios...${NC}"
+echo -e "${GREEN}  Kubernetes Troubleshooting Lab${NC}"
+echo -e "${GREEN}  QA Namespace: 20 broken scenarios${NC}"
 echo -e "${GREEN}========================================${NC}"
 
-# Create namespaces
-echo -e "\n${YELLOW}==> Creating namespaces...${NC}"
+# Create namespace
+echo -e "\n${YELLOW}==> Creating QA namespace...${NC}"
 kubectl create namespace qa --dry-run=client -o yaml | kubectl apply -f -
-kubectl create namespace advanced --dry-run=client -o yaml | kubectl apply -f -
+
+echo -e "\n${YELLOW}==> Seeding QA with 20 troubleshooting scenarios...${NC}"
 
 # ============================================================
-# QA NAMESPACE - BASIC ISSUES (app-1 to app-10)
+# BASIC ISSUES (app-1 to app-10)
 # ============================================================
-echo -e "\n${YELLOW}==> Seeding QA namespace with basic issues (app-1..app-10)...${NC}"
 
 # [app-1] CreateContainerConfigError - Secret key mismatch
 kubectl create secret generic secret-1 -n qa \
@@ -309,12 +307,11 @@ spec:
   policyTypes: ["Ingress"]
 EOF
 
-echo -e "${GREEN}✓ QA namespace: 10 basic issues created${NC}"
+echo -e "${GREEN}✓ Basic issues created (app-1 to app-10)${NC}"
 
 # ============================================================
-# ADVANCED NAMESPACE - ADVANCED ISSUES (app-11 to app-20)
+# ADVANCED ISSUES (app-11 to app-20)
 # ============================================================
-echo -e "\n${YELLOW}==> Seeding ADVANCED namespace with complex issues (app-11..app-20)...${NC}"
 
 # [app-11] PVC Pending - No StorageClass exists
 cat <<'EOF' | kubectl apply -f -
@@ -322,7 +319,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: app-11-pvc
-  namespace: advanced
+  namespace: qa
 spec:
   storageClassName: fast-ssd
   accessModes: ["ReadWriteOnce"]
@@ -333,7 +330,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: app-11
-  namespace: advanced
+  namespace: qa
 spec:
   replicas: 1
   selector: {matchLabels: {app: app-11}}
@@ -358,7 +355,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: app-12-pvc
-  namespace: advanced
+  namespace: qa
 spec:
   accessModes: ["ReadWriteOnce"]
   resources:
@@ -368,7 +365,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: app-12
-  namespace: advanced
+  namespace: qa
 spec:
   replicas: 2
   selector: {matchLabels: {app: app-12}}
@@ -393,7 +390,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: app-13
-  namespace: advanced
+  namespace: qa
 spec:
   replicas: 1
   selector: {matchLabels: {app: app-13}}
@@ -419,7 +416,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: app-14
-  namespace: advanced
+  namespace: qa
 spec:
   nodeSelector:
     node-role.kubernetes.io/control-plane: ""
@@ -434,7 +431,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: app-15
-  namespace: advanced
+  namespace: qa
 spec:
   dnsPolicy: None
   dnsConfig:
@@ -452,7 +449,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: app-16
-  namespace: advanced
+  namespace: qa
 spec:
   replicas: 2
   selector: {matchLabels: {app: app-16}}
@@ -463,7 +460,7 @@ spec:
         - name: app
           image: nginx:1.25
 EOF
-kubectl set image deployment/app-16 app=nginx:broken-tag-12345 -n advanced
+kubectl set image deployment/app-16 app=nginx:broken-tag-12345 -n qa
 
 # [app-17] StatefulSet PVC conflict
 cat <<'EOF' | kubectl apply -f -
@@ -471,7 +468,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: app-17-headless
-  namespace: advanced
+  namespace: qa
 spec:
   clusterIP: None
   selector: {app: app-17}
@@ -481,7 +478,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: app-17
-  namespace: advanced
+  namespace: qa
 spec:
   serviceName: app-17-headless
   replicas: 1
@@ -504,13 +501,13 @@ spec:
 EOF
 
 # Create conflicting PVC if not exists
-if ! kubectl get pvc data-app-17-0 -n advanced &>/dev/null; then
+if ! kubectl get pvc data-app-17-0 -n qa &>/dev/null; then
   cat <<'EOF' | kubectl apply -f -
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: data-app-17-0
-  namespace: advanced
+  namespace: qa
   labels: {app: app-17}
 spec:
   accessModes: ["ReadWriteOnce"]
@@ -528,7 +525,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: app-18
-  namespace: advanced
+  namespace: qa
 spec:
   replicas: 2
   selector: {matchLabels: {app: app-18}}
@@ -549,7 +546,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: app-19-config
-  namespace: advanced
+  namespace: qa
 data:
   app.conf: "max_connections=100"
 immutable: true
@@ -558,7 +555,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: app-19
-  namespace: advanced
+  namespace: qa
 spec:
   replicas: 1
   selector: {matchLabels: {app: app-19}}
@@ -576,7 +573,7 @@ spec:
           configMap:
             name: app-19-config
 EOF
-kubectl patch configmap app-19-config -n advanced --type merge -p '{"data":{"app.conf":"max_connections=200"}}' || echo "  - Expected failure: Immutable ConfigMap"
+kubectl patch configmap app-19-config -n qa --type merge -p '{"data":{"app.conf":"max_connections=200"}}' || echo "  - Expected failure: Immutable ConfigMap"
 
 # [app-20] Service DNS mismatch
 cat <<'EOF' | kubectl apply -f -
@@ -584,7 +581,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: app-20-db
-  namespace: advanced
+  namespace: qa
 spec:
   replicas: 1
   selector: {matchLabels: {app: app-20-db}}
@@ -600,7 +597,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: database-svc
-  namespace: advanced
+  namespace: qa
 spec:
   selector: {app: app-20-db}
   ports: [{port: 80, targetPort: 80}]
@@ -609,7 +606,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: app-20-client
-  namespace: advanced
+  namespace: qa
 spec:
   containers:
     - name: client
@@ -617,7 +614,7 @@ spec:
       command: ["sh", "-c", "wget -qO- http://db-service/ || echo 'DNS lookup failed'; sleep 3600"]
 EOF
 
-echo -e "${GREEN}✓ Advanced namespace: 10 complex issues created${NC}"
+echo -e "${GREEN}✓ Advanced issues created (app-11 to app-20)${NC}"
 
 # ============================================================
 # SUMMARY
@@ -625,19 +622,15 @@ echo -e "${GREEN}✓ Advanced namespace: 10 complex issues created${NC}"
 echo -e "\n${GREEN}========================================${NC}"
 echo -e "${GREEN}  Lab Setup Complete!${NC}"
 echo -e "${GREEN}========================================${NC}"
-echo -e "\n${YELLOW}Namespaces created:${NC}"
-echo "  - qa:        10 basic issues (app-1 to app-10)"
-echo "  - advanced:  10 advanced issues (app-11 to app-20)"
+echo -e "\n${YELLOW}Namespace: qa (20 broken scenarios)${NC}"
 echo ""
-echo -e "${YELLOW}Quick verification commands:${NC}"
+echo -e "${YELLOW}Quick verification:${NC}"
 echo "  kubectl get pods -n qa -o wide"
-echo "  kubectl get pods -n advanced -o wide"
-echo "  kubectl get pvc -n advanced"
+echo "  kubectl get pvc -n qa"
 echo ""
-echo -e "${YELLOW}Start troubleshooting with:${NC}"
+echo -e "${YELLOW}Start troubleshooting:${NC}"
 echo "  kubectl get pods -n qa"
-echo "  kubectl get pods -n advanced"
-echo "  kubectl describe pod <pod-name> -n <namespace>"
+echo "  kubectl describe pod <pod-name> -n qa"
 echo ""
-echo -e "${YELLOW}Cleanup when done:${NC}"
-echo "  kubectl delete namespace qa advanced"
+echo -e "${YELLOW}Cleanup:${NC}"
+echo "  kubectl delete namespace qa"
