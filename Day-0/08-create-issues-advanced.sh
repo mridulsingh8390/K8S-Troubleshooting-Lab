@@ -221,7 +221,9 @@ spec:
 EOF
 
 # Create a conflicting PVC manually (simulates leftover from previous deployment)
-cat <<'EOF' | kubectl apply -f -
+# Check if PVC already exists to avoid immutable field error on re-run
+if ! kubectl get pvc data-app-17-0 -n advanced &>/dev/null; then
+  cat <<'EOF' | kubectl apply -f -
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -234,6 +236,9 @@ spec:
     requests: {storage: 5Gi}  # Different size than template (1Gi)
   storageClassName: standard
 EOF
+else
+  echo "==> PVC data-app-17-0 already exists, skipping creation"
+fi
 
 # ============================================================
 # [app-18] HostPort Conflict - Two pods trying to bind same host port on same node
@@ -294,8 +299,8 @@ spec:
             name: app-19-config
 EOF
 
-# Attempt to update immutable ConfigMap (will fail)
-kubectl patch configmap app-19-config -n advanced --type merge -p '{"data":{"app.conf":"max_connections=200"}}' || true
+# Attempt to update immutable ConfigMap (will fail, but don't stop script)
+kubectl patch configmap app-19-config -n advanced --type merge -p '{"data":{"app.conf":"max_connections=200"}}' || echo "==> Expected failure: Cannot update immutable ConfigMap"
 
 # ============================================================
 # [app-20] Service DNS Mismatch - Service name doesn't match DNS expected by app
